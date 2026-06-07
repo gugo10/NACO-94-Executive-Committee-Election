@@ -1,0 +1,13 @@
+{
+  "name": "naco94-voting-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NACO 94 ELECO WhatsApp-friendly voting app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
