@@ -42,8 +42,8 @@ function setupElectionStorage() {
 
   ensureSchema(spreadsheet);
   SPREADSHEET_CACHE = spreadsheet;
-  anonymizeExistingVotes();
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
+  anonymizeExistingVotes();
 
   seedSetting('title', APP_TITLE);
   seedSetting('status', 'setup');
@@ -89,8 +89,8 @@ function setupIfNeeded() {
     const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
     ensureSchema(spreadsheet);
     SPREADSHEET_CACHE = spreadsheet;
-    anonymizeExistingVotes();
     props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
+    anonymizeExistingVotes();
   }
 }
 
@@ -118,8 +118,8 @@ function ensureSchema(spreadsheet) {
 }
 
 function getSpreadsheet() {
-  setupIfNeeded();
   if (!SPREADSHEET_CACHE) {
+    setupIfNeeded();
     SPREADSHEET_CACHE = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
   }
   return SPREADSHEET_CACHE;
