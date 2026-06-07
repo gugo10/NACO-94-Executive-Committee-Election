@@ -167,14 +167,20 @@ function readRows(sheetName) {
 
 function appendRow(sheetName, record) {
   const headers = HEADERS[sheetName];
-  sheet(sheetName).appendRow(headers.map(function (header) { return record[header] || ''; }));
+  sheet(sheetName).appendRow(headers.map(function (header) { return cellValue(record, header); }));
 }
 
 function updateRow(sheetName, rowNumber, record) {
   const headers = HEADERS[sheetName];
   sheet(sheetName).getRange(rowNumber, 1, 1, headers.length).setValues([
-    headers.map(function (header) { return record[header] || ''; })
+    headers.map(function (header) { return cellValue(record, header); })
   ]);
+}
+
+function cellValue(record, header) {
+  if (!Object.prototype.hasOwnProperty.call(record, header)) return '';
+  const value = record[header];
+  return value === null || value === undefined ? '' : value;
 }
 
 function deleteRowsByNumber(sheetName, rowNumbers) {
@@ -502,6 +508,28 @@ function updateVoter(password, voter) {
   existing.code = existing.code || '';
   updateRow(SHEETS.VOTERS, existing._row, existing);
   logAudit('admin', 'admin', 'voter_updated', { voterId: voter.id });
+  return getAdminState(password);
+}
+
+function updateVoters(password, voters) {
+  requireAdmin(password);
+  ensureRegisterUnlocked();
+  const rows = readRows(SHEETS.VOTERS);
+  const byId = {};
+  rows.forEach(function (row) { byId[row.id] = row; });
+  let count = 0;
+  (voters || []).forEach(function (voter) {
+    const existing = byId[voter.id];
+    if (!existing) return;
+    existing.fullName = String(voter.fullName || '').trim();
+    existing.whatsappNumber = String(voter.whatsappNumber || '').trim();
+    existing.eligible = voter.eligible === true || String(voter.eligible) === 'true';
+    existing.exclusionReason = String(voter.exclusionReason || '').trim();
+    existing.code = existing.code || '';
+    updateRow(SHEETS.VOTERS, existing._row, existing);
+    count++;
+  });
+  logAudit('admin', 'admin', 'voters_batch_updated', { count: count });
   return getAdminState(password);
 }
 

@@ -266,7 +266,7 @@
         </section>
         <section>
           <h2>Voters</h2>
-          <p class="muted">Edit or delete voter records before voting starts. Delete is blocked after a voter has recorded votes.</p>
+          <p class="muted">Edit or delete voter records before voting starts. Use Save all voter changes after changing eligibility for several voters.</p>
           <div class="grid">
             <div class="panel">
               <h3>Add voter</h3>
@@ -352,6 +352,7 @@
       const tokenByVoter = {};
       state.tokens.forEach(token => tokenByVoter[token.voterId] = token);
       document.getElementById('voterEditor').innerHTML = `
+        <p><button onclick="saveAllVoters()">Save all voter changes</button></p>
         <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th><th>Actions</th></tr></thead><tbody>
           ${state.voters.map(v => {
             const t = tokenByVoter[v.id];
@@ -368,6 +369,7 @@
             </tr>`;
           }).join('')}
         </tbody></table>
+        <p><button onclick="saveAllVoters()">Save all voter changes</button></p>
       `;
     }
 
@@ -410,6 +412,18 @@
         eligible: document.getElementById(`v_eligible_${id}`).value,
         exclusionReason: document.getElementById(`v_reason_${id}`).value
       }]);
+    }
+
+    function saveAllVoters() {
+      if (!latestAdminState) return;
+      const voters = latestAdminState.voters.map(v => ({
+        id: v.id,
+        fullName: document.getElementById(`v_name_${v.id}`).value,
+        whatsappNumber: document.getElementById(`v_phone_${v.id}`).value,
+        eligible: document.getElementById(`v_eligible_${v.id}`).value,
+        exclusionReason: document.getElementById(`v_reason_${v.id}`).value
+      }));
+      runAdmin('updateVoters', [adminPassword, voters]);
     }
 
     function deleteVoter(id) {
