@@ -1,0 +1,395 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><?= appTitle ?></title>
+  <style>
+    :root { --ink:#17202a; --muted:#62717d; --bg:#f4f7f8; --panel:#fff; --line:#dbe2e7; --accent:#087f5b; --danger:#b42318; --warn:#8a6a00; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial, Helvetica, sans-serif; background:var(--bg); color:var(--ink); }
+    header { background:#0b3d2e; color:white; padding:16px 14px; }
+    header h1 { margin:0; font-size:22px; letter-spacing:0; line-height:1.2; }
+    nav { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    nav button { border:1px solid rgba(255,255,255,.45); background:transparent; color:white; border-radius:6px; padding:8px 10px; cursor:pointer; }
+    main { max-width:1100px; margin:0 auto; padding:16px 12px 36px; }
+    section, .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:15px; margin-bottom:14px; }
+    h2 { margin:0 0 10px; font-size:19px; }
+    h3 { margin:0 0 8px; font-size:16px; }
+    label { display:block; font-weight:700; font-size:14px; margin:10px 0 5px; }
+    input, select, textarea { width:100%; border:1px solid #bdc6cf; border-radius:6px; padding:11px; font:inherit; background:white; }
+    textarea { min-height:120px; }
+    button, .button { background:var(--accent); color:white; border:0; border-radius:6px; padding:11px 14px; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
+    button.secondary { background:#314156; }
+    button.warn { background:var(--warn); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+    .stat { border:1px solid #cde6dc; background:#eef7f3; border-radius:8px; padding:11px; }
+    .stat strong { display:block; font-size:24px; margin-top:4px; }
+    .muted { color:var(--muted); }
+    .error { color:var(--danger); font-weight:700; }
+    .ok { color:var(--accent); font-weight:700; }
+    .candidate { display:block; border:1px solid var(--line); border-radius:8px; padding:12px; margin:8px 0; background:white; }
+    .candidate input { width:auto; margin-right:8px; }
+    .bar { height:12px; border-radius:999px; background:#e7ecef; overflow:hidden; margin:5px 0 12px; }
+    .fill { height:100%; background:#0b8f66; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:8px 6px; }
+    th { background:#f7fafb; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#eef0f2; font-size:12px; }
+    .pill.ok { background:#dff4ea; color:#087f5b; }
+    .pill.bad { background:#fde4e1; color:#b42318; }
+    @media (max-width:720px) {
+      table, thead, tbody, tr, th, td { display:block; }
+      thead { display:none; }
+      tr { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:9px; }
+      td { border:0; padding:5px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="appTitle"><?= appTitle ?></h1>
+    <nav>
+      <button onclick="showVote()">Vote</button>
+      <button onclick="showResults()">Results</button>
+      <button onclick="showAdmin()">Admin</button>
+    </nav>
+  </header>
+  <main id="app"></main>
+
+  <script>
+    const initialPage = '<?= initialPage ?>';
+    const initialCode = '<?= initialCode ?>';
+    let adminPassword = sessionStorage.getItem('nacoAdminPassword') || '';
+    let currentResultsTimer = null;
+
+    function html(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function setApp(markup) {
+      document.getElementById('app').innerHTML = markup;
+    }
+
+    function error(message) {
+      return `<p class="error">${html(message)}</p>`;
+    }
+
+    function stopResultsTimer() {
+      if (currentResultsTimer) clearInterval(currentResultsTimer);
+      currentResultsTimer = null;
+    }
+
+    function run(fn, args, onSuccess) {
+      google.script.run
+        .withSuccessHandler(onSuccess)
+        .withFailureHandler(err => setApp(`<section>${error(err.message || err)}</section>`))[fn](...(args || []));
+    }
+
+    function showVote(message = '') {
+      stopResultsTimer();
+      setApp(`
+        <section>
+          <h2>Enter your private voting code</h2>
+          <p class="muted">Use the code ELECO sent privately to your WhatsApp. Only registered eligible voters can open a ballot.</p>
+          ${message ? error(message) : ''}
+          <label for="code">Voting code</label>
+          <input id="code" autocomplete="one-time-code" value="${html(initialCode)}" placeholder="Example: A1B2C3D4E5">
+          <p><button onclick="lookup()">Continue to ballot</button></p>
+        </section>
+        <section id="publicSummary"></section>
+      `);
+      loadPublicSummary();
+      if (initialCode) lookup();
+    }
+
+    function lookup() {
+      const code = document.getElementById('code').value.trim();
+      if (!code) return;
+      setApp('<section><p>Checking code...</p></section>');
+      run('lookupCode', [code], data => renderBallot(code, data));
+    }
+
+    function renderBallot(code, data) {
+      if (data.alreadyVoted) {
+        setApp(`<section><h2>Vote already submitted</h2><p class="ok">Thank you, ${html(data.voter.fullName)}. This code has already been used.</p><p><button class="secondary" onclick="showResults()">View public results</button></p></section>`);
+        return;
+      }
+      const offices = data.offices.map(office => `
+        <section>
+          <h2>${html(office.title)}</h2>
+          <p class="muted">Choose one candidate.</p>
+          ${office.candidates.map(candidate => `<label class="candidate"><input type="radio" name="office_${html(office.id)}" value="${html(candidate.id)}" required> ${html(candidate.name)}</label>`).join('')}
+        </section>
+      `).join('');
+      setApp(`
+        <section>
+          <h2>Hello, ${html(data.voter.fullName)}</h2>
+          <p class="muted">Confirm your choices carefully. Your code can submit only once.</p>
+        </section>
+        <form id="voteForm" onsubmit="submitBallot(event, '${html(code)}')">
+          ${offices || '<section><p class="error">No ballot has been configured yet.</p></section>'}
+          <section><button type="submit">Submit vote</button></section>
+        </form>
+      `);
+    }
+
+    function submitBallot(event, code) {
+      event.preventDefault();
+      const choices = {};
+      document.querySelectorAll('input[type=radio]:checked').forEach(input => {
+        choices[input.name.replace('office_', '')] = input.value;
+      });
+      setApp('<section><p>Submitting vote...</p></section>');
+      run('submitVote', [code, choices], data => {
+        setApp(`<section><h2>Vote submitted</h2><p class="ok">Thank you, ${html(data.voterName)}. Your vote has been recorded.</p><p><button class="secondary" onclick="showResults()">View public results</button></p></section>`);
+      });
+    }
+
+    function loadPublicSummary() {
+      run('getResults', [], data => {
+        const box = document.getElementById('publicSummary');
+        if (box) box.innerHTML = `<h2>Live public result</h2>${renderSummary(data)}<p><button class="secondary" onclick="showResults()">View live results</button></p>`;
+      });
+    }
+
+    function showResults() {
+      stopResultsTimer();
+      setApp('<section><h2>Live public results</h2><p>Loading...</p></section>');
+      const refresh = () => run('getResults', [], data => {
+        setApp(`<section><h2>Live public results</h2><p class="muted">This page updates automatically and shows totals only.</p>${renderSummary(data)}${renderResults(data)}</section>`);
+      });
+      refresh();
+      currentResultsTimer = setInterval(refresh, 5000);
+    }
+
+    function renderSummary(data) {
+      return `
+        <div class="stats">
+          <div class="stat">Registered<strong>${data.summary.registered}</strong></div>
+          <div class="stat">Eligible<strong>${data.summary.eligible}</strong></div>
+          <div class="stat">Votes cast<strong>${data.summary.votesCast}</strong></div>
+          <div class="stat">Turnout<strong>${data.summary.turnout}%</strong></div>
+        </div>
+      `;
+    }
+
+    function renderResults(data) {
+      return data.offices.map(office => `
+        <section>
+          <h2>${html(office.title)}</h2>
+          ${office.candidates.map(candidate => {
+            const pct = office.total ? Math.round(candidate.count / office.total * 100) : 0;
+            return `<div><strong>${html(candidate.name)}</strong> <span class="muted">- ${candidate.count} vote${candidate.count === 1 ? '' : 's'} (${pct}%)</span><div class="bar"><div class="fill" style="width:${pct}%"></div></div></div>`;
+          }).join('')}
+        </section>
+      `).join('');
+    }
+
+    function showAdmin() {
+      stopResultsTimer();
+      if (!adminPassword) {
+        setApp(`
+          <section>
+            <h2>ELECO admin login</h2>
+            <label for="adminPassword">Admin password</label>
+            <input id="adminPassword" type="password">
+            <p><button onclick="loginAdmin()">Login</button></p>
+          </section>
+        `);
+        return;
+      }
+      loadAdmin();
+    }
+
+    function loginAdmin() {
+      adminPassword = document.getElementById('adminPassword').value;
+      sessionStorage.setItem('nacoAdminPassword', adminPassword);
+      loadAdmin();
+    }
+
+    function logoutAdmin() {
+      adminPassword = '';
+      sessionStorage.removeItem('nacoAdminPassword');
+      showAdmin();
+    }
+
+    function loadAdmin() {
+      setApp('<section><p>Loading admin...</p></section>');
+      run('getAdminState', [adminPassword], renderAdmin);
+    }
+
+    function renderAdmin(state) {
+      const tokenByVoter = {};
+      state.tokens.forEach(token => tokenByVoter[token.voterId] = token);
+      setApp(`
+        <section>
+          <h2>ELECO admin</h2>
+          <p><button class="secondary" onclick="logoutAdmin()">Logout</button></p>
+          <p class="muted">Data spreadsheet: <a href="${html(state.spreadsheetUrl)}" target="_blank">open Google Sheet</a></p>
+          ${renderSummary(state.results)}
+        </section>
+        <section>
+          <h2>Election settings</h2>
+          <div class="grid">
+            <div><label>Title</label><input id="title" value="${html(state.election.title)}"></div>
+            <div><label>Status</label><select id="status">${['setup','open','paused','closed'].map(s => `<option ${state.election.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
+            <div><label>Open date/time</label><input id="opensAt" type="datetime-local"></div>
+            <div><label>Close date/time</label><input id="closesAt" type="datetime-local"></div>
+            <div><label>New admin password</label><input id="newAdminPassword" type="password" placeholder="Leave blank to keep current"></div>
+          </div>
+          <p><button onclick="saveSettings()">Save settings</button> <button class="warn" onclick="lockRegister()">Lock register</button></p>
+          <p class="muted">Register lock: ${html(state.election.registerLockedAt || 'not locked')}</p>
+        </section>
+        <section>
+          <h2>Voters</h2>
+          <div class="grid">
+            <div class="panel">
+              <h3>Add voter</h3>
+              <label>Name</label><input id="voterName">
+              <label>WhatsApp number</label><input id="voterPhone">
+              <label>Eligibility</label><select id="voterEligible"><option value="true">Eligible</option><option value="false">Ineligible</option></select>
+              <label>Exclusion reason</label><input id="voterReason" placeholder="Example: ELECO member">
+              <p><button onclick="addVoter()">Add voter</button></p>
+            </div>
+            <div class="panel">
+              <h3>Bulk import</h3>
+              <textarea id="bulkVoters" placeholder="One per line: Full Name, WhatsApp Number"></textarea>
+              <p><button onclick="importVoters()">Import voters</button></p>
+            </div>
+          </div>
+          <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th></tr></thead><tbody>
+            ${state.voters.map(v => {
+              const t = tokenByVoter[v.id];
+              const eligible = String(v.eligible).toLowerCase() === 'true';
+              return `<tr><td>${html(v.fullName)}</td><td>${html(v.whatsappNumber)}</td><td>${eligible ? '<span class="pill ok">Eligible</span>' : '<span class="pill bad">Excluded</span>'} ${html(v.exclusionReason || '')}</td><td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td></tr>`;
+            }).join('')}
+          </tbody></table>
+        </section>
+        <section>
+          <h2>Offices and candidates</h2>
+          <div class="grid">
+            <div class="panel">
+              <h3>Add office</h3>
+              <label>Office title</label><input id="officeTitle">
+              <label>Seats available</label><input id="officeSeats" type="number" value="1">
+              <label>Display order</label><input id="officeOrder" type="number" value="${state.offices.length + 1}">
+              <p><button onclick="addOffice()">Add office</button></p>
+            </div>
+            <div class="panel">
+              <h3>Add candidate</h3>
+              <label>Office</label><select id="candidateOffice">${state.offices.map(o => `<option value="${html(o.id)}">${html(o.title)}</option>`).join('')}</select>
+              <label>Full name</label><input id="candidateName">
+              <label>Display name</label><input id="candidateDisplay">
+              <p><button onclick="addCandidate()">Add candidate</button></p>
+            </div>
+          </div>
+          ${state.offices.map(o => `<div class="panel"><h3>${html(o.title)}</h3><ul>${state.candidates.filter(c => c.officeId === o.id).map(c => `<li>${html(c.displayName || c.fullName)}</li>`).join('') || '<li>No candidates yet.</li>'}</ul></div>`).join('')}
+        </section>
+        <section>
+          <h2>Voting codes</h2>
+          <p class="muted">Codes are linked to specific eligible voters. Send each code or link by WhatsApp direct message.</p>
+          <p><button onclick="generateCodes()">Generate missing eligible voter codes</button></p>
+          <textarea id="generatedCodes" readonly placeholder="Generated codes will appear here."></textarea>
+        </section>
+        <section>
+          <h2>Confidential ELECO report</h2>
+          <p class="muted">This report includes voter-by-voter choices. Do not share it with the public group.</p>
+          <p><button class="secondary" onclick="showReport()">Open confidential report</button></p>
+        </section>
+      `);
+    }
+
+    function saveSettings() {
+      const settings = {
+        title: document.getElementById('title').value,
+        status: document.getElementById('status').value,
+        opensAt: document.getElementById('opensAt').value ? new Date(document.getElementById('opensAt').value).toISOString() : '',
+        closesAt: document.getElementById('closesAt').value ? new Date(document.getElementById('closesAt').value).toISOString() : '',
+        adminPassword: document.getElementById('newAdminPassword').value
+      };
+      run('saveElectionSettings', [adminPassword, settings], state => {
+        if (settings.adminPassword) {
+          adminPassword = settings.adminPassword;
+          sessionStorage.setItem('nacoAdminPassword', adminPassword);
+        }
+        renderAdmin(state);
+      });
+    }
+
+    function addVoter() {
+      run('addVoter', [adminPassword, {
+        fullName: document.getElementById('voterName').value,
+        whatsappNumber: document.getElementById('voterPhone').value,
+        eligible: document.getElementById('voterEligible').value,
+        exclusionReason: document.getElementById('voterReason').value
+      }], renderAdmin);
+    }
+
+    function importVoters() {
+      run('importVoters', [adminPassword, document.getElementById('bulkVoters').value], renderAdmin);
+    }
+
+    function addOffice() {
+      run('addOffice', [adminPassword, {
+        title: document.getElementById('officeTitle').value,
+        seatsAvailable: document.getElementById('officeSeats').value,
+        displayOrder: document.getElementById('officeOrder').value
+      }], renderAdmin);
+    }
+
+    function addCandidate() {
+      run('addCandidate', [adminPassword, {
+        officeId: document.getElementById('candidateOffice').value,
+        fullName: document.getElementById('candidateName').value,
+        displayName: document.getElementById('candidateDisplay').value
+      }], renderAdmin);
+    }
+
+    function generateCodes() {
+      run('generateMissingCodes', [adminPassword, location.href], codes => {
+        document.getElementById('generatedCodes').value = codes.map(item => `${item.voterName}, ${item.whatsappNumber}, Code: ${item.code}, Link: ${item.link}`).join('\n') || 'No new codes were needed.';
+      });
+    }
+
+    function lockRegister() {
+      if (confirm('Lock the voter register and preserve a final snapshot?')) {
+        run('lockRegister', [adminPassword], renderAdmin);
+      }
+    }
+
+    function showReport() {
+      setApp('<section><p>Loading report...</p></section>');
+      run('getConfidentialReport', [adminPassword], report => {
+        setApp(`
+          <section>
+            <h2>Confidential ELECO report</h2>
+            ${renderSummary(report.results)}
+            <p><button class="secondary" onclick="showAdmin()">Back to admin</button></p>
+          </section>
+          <section><h2>Public totals</h2>${renderResults(report.results)}</section>
+          <section><h2>Voters who voted</h2>${renderList(report.votersWhoVoted)}</section>
+          <section><h2>Eligible voters who did not vote</h2>${renderList(report.eligibleVotersWhoDidNotVote)}</section>
+          <section><h2>Excluded voters</h2>${renderList(report.excludedVoters)}</section>
+          <section><h2>Voter-by-voter choices</h2>${report.confidentialChoices.map(item => `<div class="panel"><h3>${html(item.voterName)}</h3><p class="muted">${html(item.whatsappNumber || '')}</p><ul>${item.choices.map(c => `<li>${html(c.office)}: ${html(c.candidate)}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">No votes yet.</p>'}</section>
+        `);
+      });
+    }
+
+    function renderList(items) {
+      return items && items.length ? `<table><tbody>${items.map(item => `<tr><td>${html(item.fullName || item.voterName || '')}</td><td>${html(item.whatsappNumber || '')}</td><td>${html(item.exclusionReason || '')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">None.</p>';
+    }
+
+    if (initialPage === 'results') showResults();
+    else if (initialPage === 'admin') showAdmin();
+    else showVote();
+  </script>
+</body>
+</html>
