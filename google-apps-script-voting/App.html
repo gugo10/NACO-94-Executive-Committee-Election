@@ -65,6 +65,7 @@
     const initialCode = '<?= initialCode ?>';
     let adminPassword = sessionStorage.getItem('nacoAdminPassword') || '';
     let currentResultsTimer = null;
+    let latestAdminState = null;
 
     function html(value) {
       return String(value ?? '')
@@ -83,6 +84,16 @@
       return `<p class="error">${html(message)}</p>`;
     }
 
+    function statusLine(message) {
+      const existing = document.getElementById('statusLine');
+      if (existing) {
+        existing.textContent = message;
+        return;
+      }
+      const app = document.getElementById('app');
+      app.insertAdjacentHTML('afterbegin', `<section id="statusBox"><p id="statusLine" class="muted">${html(message)}</p></section>`);
+    }
+
     function stopResultsTimer() {
       if (currentResultsTimer) clearInterval(currentResultsTimer);
       currentResultsTimer = null;
@@ -91,7 +102,12 @@
     function run(fn, args, onSuccess) {
       google.script.run
         .withSuccessHandler(onSuccess)
-        .withFailureHandler(err => setApp(`<section>${error(err.message || err)}</section>`))[fn](...(args || []));
+        .withFailureHandler(err => statusLine(err.message || err))[fn](...(args || []));
+    }
+
+    function runAdmin(fn, args) {
+      statusLine('Saving...');
+      run(fn, args, renderAdmin);
     }
 
     function showVote(message = '') {
@@ -228,8 +244,7 @@
     }
 
     function renderAdmin(state) {
-      const tokenByVoter = {};
-      state.tokens.forEach(token => tokenByVoter[token.voterId] = token);
+      latestAdminState = state;
       setApp(`
         <section>
           <h2>ELECO admin</h2>
@@ -267,22 +282,8 @@
               <p><button onclick="importVoters()">Import voters</button> <button class="warn" onclick="removeDuplicateVoters()">Remove duplicate voters</button></p>
             </div>
           </div>
-          <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th><th>Actions</th></tr></thead><tbody>
-            ${state.voters.map(v => {
-              const t = tokenByVoter[v.id];
-              const eligible = String(v.eligible).toLowerCase() === 'true';
-              return `<tr>
-                <td><input id="v_name_${html(v.id)}" value="${html(v.fullName)}"></td>
-                <td><input id="v_phone_${html(v.id)}" value="${html(v.whatsappNumber)}"></td>
-                <td>
-                  <select id="v_eligible_${html(v.id)}"><option value="true" ${eligible ? 'selected' : ''}>Eligible</option><option value="false" ${!eligible ? 'selected' : ''}>Ineligible</option></select>
-                  <input id="v_reason_${html(v.id)}" value="${html(v.exclusionReason || '')}" placeholder="Exclusion reason">
-                </td>
-                <td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td>
-                <td><button onclick="updateVoter('${html(v.id)}')">Save</button> <button class="danger" onclick="deleteVoter('${html(v.id)}')">Delete</button></td>
-              </tr>`;
-            }).join('')}
-          </tbody></table>
+          <p><button class="secondary" onclick="renderVoterEditor()">Open voter editor (${state.voters.length} records)</button></p>
+          <div id="voterEditor"></div>
         </section>
         <section>
           <h2>Offices and candidates</h2>
@@ -345,6 +346,31 @@
       `);
     }
 
+    function renderVoterEditor() {
+      const state = latestAdminState;
+      if (!state) return;
+      const tokenByVoter = {};
+      state.tokens.forEach(token => tokenByVoter[token.voterId] = token);
+      document.getElementById('voterEditor').innerHTML = `
+        <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th><th>Actions</th></tr></thead><tbody>
+          ${state.voters.map(v => {
+            const t = tokenByVoter[v.id];
+            const eligible = String(v.eligible).toLowerCase() === 'true';
+            return `<tr>
+              <td><input id="v_name_${html(v.id)}" value="${html(v.fullName)}"></td>
+              <td><input id="v_phone_${html(v.id)}" value="${html(v.whatsappNumber)}"></td>
+              <td>
+                <select id="v_eligible_${html(v.id)}"><option value="true" ${eligible ? 'selected' : ''}>Eligible</option><option value="false" ${!eligible ? 'selected' : ''}>Ineligible</option></select>
+                <input id="v_reason_${html(v.id)}" value="${html(v.exclusionReason || '')}" placeholder="Exclusion reason">
+              </td>
+              <td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td>
+              <td><button onclick="updateVoter('${html(v.id)}')">Save</button> <button class="danger" onclick="deleteVoter('${html(v.id)}')">Delete</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody></table>
+      `;
+    }
+
     function saveSettings() {
       const settings = {
         title: document.getElementById('title').value,
@@ -353,6 +379,7 @@
         closesAt: document.getElementById('closesAt').value ? new Date(document.getElementById('closesAt').value).toISOString() : '',
         adminPassword: document.getElementById('newAdminPassword').value
       };
+      statusLine('Saving settings...');
       run('saveElectionSettings', [adminPassword, settings], state => {
         if (settings.adminPassword) {
           adminPassword = settings.adminPassword;
@@ -363,36 +390,37 @@
     }
 
     function addVoter() {
-      run('addVoter', [adminPassword, {
+      runAdmin('addVoter', [adminPassword, {
         fullName: document.getElementById('voterName').value,
         whatsappNumber: document.getElementById('voterPhone').value,
         eligible: document.getElementById('voterEligible').value,
         exclusionReason: document.getElementById('voterReason').value
-      }], renderAdmin);
+      }]);
     }
 
     function importVoters() {
-      run('importVoters', [adminPassword, document.getElementById('bulkVoters').value], renderAdmin);
+      runAdmin('importVoters', [adminPassword, document.getElementById('bulkVoters').value]);
     }
 
     function updateVoter(id) {
-      run('updateVoter', [adminPassword, {
+      runAdmin('updateVoter', [adminPassword, {
         id,
         fullName: document.getElementById(`v_name_${id}`).value,
         whatsappNumber: document.getElementById(`v_phone_${id}`).value,
         eligible: document.getElementById(`v_eligible_${id}`).value,
         exclusionReason: document.getElementById(`v_reason_${id}`).value
-      }], renderAdmin);
+      }]);
     }
 
     function deleteVoter(id) {
       if (confirm('Delete this voter and any unused code linked to them?')) {
-        run('deleteVoter', [adminPassword, id], renderAdmin);
+        runAdmin('deleteVoter', [adminPassword, id]);
       }
     }
 
     function removeDuplicateVoters() {
       if (confirm('Remove duplicate voters with the same name and WhatsApp number? The first record will be kept.')) {
+        statusLine('Removing duplicates...');
         run('removeDuplicateVoters', [adminPassword], result => {
           alert(`${result.removed} duplicate voter record(s) removed.`);
           renderAdmin(result.state);
@@ -401,49 +429,49 @@
     }
 
     function addOffice() {
-      run('addOffice', [adminPassword, {
+      runAdmin('addOffice', [adminPassword, {
         title: document.getElementById('officeTitle').value,
         seatsAvailable: document.getElementById('officeSeats').value,
         displayOrder: document.getElementById('officeOrder').value
-      }], renderAdmin);
+      }]);
     }
 
     function updateOffice(id) {
-      run('updateOffice', [adminPassword, {
+      runAdmin('updateOffice', [adminPassword, {
         id,
         title: document.getElementById(`o_title_${id}`).value,
         seatsAvailable: document.getElementById(`o_seats_${id}`).value,
         displayOrder: document.getElementById(`o_order_${id}`).value
-      }], renderAdmin);
+      }]);
     }
 
     function deleteOffice(id) {
       if (confirm('Delete this office and all candidates under it?')) {
-        run('deleteOffice', [adminPassword, id], renderAdmin);
+        runAdmin('deleteOffice', [adminPassword, id]);
       }
     }
 
     function addCandidate() {
-      run('addCandidate', [adminPassword, {
+      runAdmin('addCandidate', [adminPassword, {
         officeId: document.getElementById('candidateOffice').value,
         fullName: document.getElementById('candidateName').value,
         displayName: document.getElementById('candidateDisplay').value
-      }], renderAdmin);
+      }]);
     }
 
     function updateCandidate(id) {
-      run('updateCandidate', [adminPassword, {
+      runAdmin('updateCandidate', [adminPassword, {
         id,
         officeId: document.getElementById(`c_office_${id}`).value,
         fullName: document.getElementById(`c_name_${id}`).value,
         displayName: document.getElementById(`c_display_${id}`).value,
         status: document.getElementById(`c_status_${id}`).value
-      }], renderAdmin);
+      }]);
     }
 
     function deleteCandidate(id) {
       if (confirm('Delete this candidate?')) {
-        run('deleteCandidate', [adminPassword, id], renderAdmin);
+        runAdmin('deleteCandidate', [adminPassword, id]);
       }
     }
 
@@ -455,7 +483,7 @@
 
     function lockRegister() {
       if (confirm('Lock the voter register and preserve a final snapshot?')) {
-        run('lockRegister', [adminPassword], renderAdmin);
+        runAdmin('lockRegister', [adminPassword]);
       }
     }
 
@@ -463,7 +491,7 @@
       const title = document.getElementById('newElectionTitle').value;
       const clearVoters = document.getElementById('clearVotersForNewElection').checked;
       if (confirm('Archive the current election and start a new one? This clears current codes, votes, offices, and candidates.')) {
-        run('startNewElection', [adminPassword, { title, clearVoters }], renderAdmin);
+        runAdmin('startNewElection', [adminPassword, { title, clearVoters }]);
       }
     }
 

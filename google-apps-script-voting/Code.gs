@@ -1,5 +1,7 @@
 const APP_TITLE = 'NACO 94 Executive Committee Election';
 const DEFAULT_ADMIN_PASSWORD = 'test-admin-password';
+const SCHEMA_VERSION = '2';
+let SPREADSHEET_CACHE = null;
 
 const SHEETS = {
   SETTINGS: 'Settings',
@@ -38,6 +40,8 @@ function setupElectionStorage() {
   }
 
   ensureSchema(spreadsheet);
+  SPREADSHEET_CACHE = spreadsheet;
+  props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 
   seedSetting('title', APP_TITLE);
   seedSetting('status', 'setup');
@@ -60,10 +64,11 @@ function doGet(e) {
   const template = HtmlService.createTemplateFromFile('App');
   template.initialPage = (e && e.parameter && e.parameter.page) || 'vote';
   template.initialCode = (e && e.parameter && e.parameter.code) || '';
-  template.appTitle = getSetting('title') || APP_TITLE;
+  const title = getSetting('title') || APP_TITLE;
+  template.appTitle = title;
   return template
     .evaluate()
-    .setTitle(getSetting('title') || APP_TITLE)
+    .setTitle(title)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -72,11 +77,17 @@ function include(filename) {
 }
 
 function setupIfNeeded() {
-  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  const props = PropertiesService.getScriptProperties();
+  const spreadsheetId = props.getProperty('SPREADSHEET_ID');
   if (!spreadsheetId) {
     setupElectionStorage();
-  } else {
-    ensureSchema(SpreadsheetApp.openById(spreadsheetId));
+    return;
+  }
+  if (props.getProperty('SCHEMA_VERSION') !== SCHEMA_VERSION) {
+    const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    ensureSchema(spreadsheet);
+    SPREADSHEET_CACHE = spreadsheet;
+    props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
   }
 }
 
@@ -105,7 +116,10 @@ function ensureSchema(spreadsheet) {
 
 function getSpreadsheet() {
   setupIfNeeded();
-  return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+  if (!SPREADSHEET_CACHE) {
+    SPREADSHEET_CACHE = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID'));
+  }
+  return SPREADSHEET_CACHE;
 }
 
 function sheet(name) {
@@ -224,6 +238,10 @@ function getResults() {
   });
   const candidates = readRows(SHEETS.CANDIDATES);
   const votes = readRows(SHEETS.VOTES);
+  return buildResults(voters, tokens, offices, candidates, votes);
+}
+
+function buildResults(voters, tokens, offices, candidates, votes) {
   const eligible = voters.filter(isEligible);
   const excluded = voters.length - eligible.length;
   const votedIds = {};
@@ -381,12 +399,17 @@ function submitVote(code, choices) {
 
 function getAdminState(password) {
   requireAdmin(password);
+  const voters = readRows(SHEETS.VOTERS);
+  const offices = readRows(SHEETS.OFFICES);
+  const candidates = readRows(SHEETS.CANDIDATES);
+  const tokens = readRows(SHEETS.TOKENS);
+  const votes = readRows(SHEETS.VOTES);
   return {
     election: getPublicConfig(),
-    voters: readRows(SHEETS.VOTERS),
-    offices: readRows(SHEETS.OFFICES),
-    candidates: readRows(SHEETS.CANDIDATES),
-    tokens: readRows(SHEETS.TOKENS).map(function (token) {
+    voters: voters,
+    offices: offices,
+    candidates: candidates,
+    tokens: tokens.map(function (token) {
       return {
         id: token.id,
         voterId: token.voterId,
@@ -396,7 +419,7 @@ function getAdminState(password) {
         codeSuffix: token.codeSuffix
       };
     }),
-    results: getResults(),
+    results: buildResults(voters, tokens, offices, candidates, votes),
     spreadsheetUrl: getSpreadsheet().getUrl()
   };
 }
@@ -696,7 +719,7 @@ function getConfidentialReport(password) {
   });
   return {
     election: getPublicConfig(),
-    results: getResults(),
+    results: buildResults(voters, tokens, offices, candidates, votes),
     votersWhoVoted: voters.filter(function (voter) { return votedIds[voter.id]; }),
     eligibleVotersWhoDidNotVote: voters.filter(function (voter) {
       const eligible = isEligible(voter);
