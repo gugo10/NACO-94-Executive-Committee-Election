@@ -118,7 +118,7 @@
           <p class="muted">Use the code ELECO sent privately to your WhatsApp. Only registered eligible voters can open a ballot.</p>
           ${message ? error(message) : ''}
           <label for="code">Voting code</label>
-          <input id="code" autocomplete="one-time-code" value="${html(initialCode)}" placeholder="Example: A1B2C3D4E5">
+          <input id="code" autocomplete="one-time-code" value="${html(initialCode)}" placeholder="Example: A7K3P">
           <p><button onclick="lookup()">Continue to ballot</button></p>
         </section>
         <section id="publicSummary"></section>
@@ -363,7 +363,7 @@
                 <select id="v_eligible_${html(v.id)}"><option value="true" ${eligible ? 'selected' : ''}>Eligible</option><option value="false" ${!eligible ? 'selected' : ''}>Ineligible</option></select>
                 <input id="v_reason_${html(v.id)}" value="${html(v.exclusionReason || '')}" placeholder="Exclusion reason">
               </td>
-              <td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td>
+              <td>${v.code ? `<strong>${html(v.code)}</strong><br>` : ''}${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td>
               <td><button onclick="updateVoter('${html(v.id)}')">Save</button> <button class="danger" onclick="deleteVoter('${html(v.id)}')">Delete</button></td>
             </tr>`;
           }).join('')}
@@ -508,7 +508,7 @@
           <section><h2>Voters who voted</h2>${renderList(report.votersWhoVoted)}</section>
           <section><h2>Eligible voters who did not vote</h2>${renderList(report.eligibleVotersWhoDidNotVote)}</section>
           <section><h2>Excluded voters</h2>${renderList(report.excludedVoters)}</section>
-          <section><h2>Voter-by-voter choices</h2>${report.confidentialChoices.map(item => `<div class="panel"><h3>${html(item.voterName)}</h3><p class="muted">${html(item.whatsappNumber || '')}</p><ul>${item.choices.map(c => `<li>${html(c.office)}: ${html(c.candidate)}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">No votes yet.</p>'}</section>
+          <section><h2>Voter-by-voter choices</h2>${report.confidentialChoices.map(item => `<div class="panel"><h3>${html(item.voterName)}</h3><p class="muted">${html(item.whatsappNumber || '')}${item.code ? ' | Code: ' + html(item.code) : ''}</p><ul>${item.choices.map(c => `<li>${html(c.office)}: ${html(c.candidate)}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">No votes yet.</p>'}</section>
         `);
       });
     }

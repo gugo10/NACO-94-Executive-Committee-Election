@@ -1,7 +1,8 @@
 const APP_TITLE = 'NACO 94 Executive Committee Election';
 const DEFAULT_ADMIN_PASSWORD = 'test-admin-password';
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 let SPREADSHEET_CACHE = null;
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ123456789';
 
 const SHEETS = {
   SETTINGS: 'Settings',
@@ -17,7 +18,7 @@ const SHEETS = {
 
 const HEADERS = {
   Settings: ['key', 'value'],
-  Voters: ['id', 'fullName', 'whatsappNumber', 'registeredAt', 'eligible', 'exclusionReason'],
+  Voters: ['id', 'fullName', 'whatsappNumber', 'registeredAt', 'eligible', 'exclusionReason', 'code'],
   Offices: ['id', 'title', 'seatsAvailable', 'displayOrder'],
   Candidates: ['id', 'officeId', 'fullName', 'displayName', 'status'],
   Tokens: ['id', 'voterId', 'tokenHash', 'issuedAt', 'usedAt', 'revokedAt', 'codeSuffix'],
@@ -198,7 +199,23 @@ function makeId(prefix) {
 }
 
 function makeCode() {
-  return Utilities.getUuid().replace(/-/g, '').slice(0, 10).toUpperCase();
+  let code = '';
+  for (let i = 0; i < 5; i++) {
+    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+function makeUniqueCode(existingCodes) {
+  existingCodes = existingCodes || {};
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const code = makeCode();
+    if (!existingCodes[code]) {
+      existingCodes[code] = true;
+      return code;
+    }
+  }
+  throw new Error('Unable to generate a unique voting code. Please try again.');
 }
 
 function hashCode(code) {
@@ -445,7 +462,8 @@ function addVoter(password, voter) {
     whatsappNumber: String(voter.whatsappNumber || '').trim(),
     registeredAt: nowIso(),
     eligible: voter.eligible === true || String(voter.eligible) === 'true',
-    exclusionReason: String(voter.exclusionReason || '').trim()
+    exclusionReason: String(voter.exclusionReason || '').trim(),
+    code: ''
   });
   logAudit('admin', 'admin', 'voter_added', { fullName: voter.fullName });
   return getAdminState(password);
@@ -463,7 +481,8 @@ function importVoters(password, text) {
       whatsappNumber: String(parts[1] || '').trim(),
       registeredAt: nowIso(),
       eligible: true,
-      exclusionReason: ''
+      exclusionReason: '',
+      code: ''
     });
   });
   logAudit('admin', 'admin', 'voters_imported', { count: lines.length });
@@ -480,6 +499,7 @@ function updateVoter(password, voter) {
   existing.whatsappNumber = String(voter.whatsappNumber || '').trim();
   existing.eligible = voter.eligible === true || String(voter.eligible) === 'true';
   existing.exclusionReason = String(voter.exclusionReason || '').trim();
+  existing.code = existing.code || '';
   updateRow(SHEETS.VOTERS, existing._row, existing);
   logAudit('admin', 'admin', 'voter_updated', { voterId: voter.id });
   return getAdminState(password);
@@ -614,14 +634,32 @@ function generateMissingCodes(password, webAppUrl) {
   requireAdmin(password);
   const voters = readRows(SHEETS.VOTERS);
   const tokens = readRows(SHEETS.TOKENS);
+  const existingCodes = {};
+  voters.forEach(function (voter) {
+    const code = String(voter.code || '').trim().toUpperCase();
+    if (code) existingCodes[code] = true;
+  });
+  tokens.forEach(function (token) {
+    const suffix = String(token.codeSuffix || '').trim().toUpperCase();
+    if (suffix.length === 5 && !token.revokedAt) existingCodes[suffix] = true;
+  });
   const generated = [];
   voters.forEach(function (voter) {
     const eligible = isEligible(voter);
-    const hasActive = tokens.some(function (token) {
-      return token.voterId === voter.id && !token.revokedAt && !token.usedAt;
+    const voterTokens = tokens.filter(function (token) {
+      return token.voterId === voter.id && !token.revokedAt;
     });
-    if (!eligible || hasActive) return;
-    const code = makeCode();
+    const hasUsed = voterTokens.some(function (token) { return token.usedAt; });
+    const activeUnused = voterTokens.filter(function (token) { return !token.usedAt; });
+    if (!eligible || hasUsed) return;
+    if (voter.code && activeUnused.length) return;
+    activeUnused.forEach(function (token) {
+      token.revokedAt = nowIso();
+      updateRow(SHEETS.TOKENS, token._row, token);
+    });
+    const code = makeUniqueCode(existingCodes);
+    voter.code = code;
+    updateRow(SHEETS.VOTERS, voter._row, voter);
     appendRow(SHEETS.TOKENS, {
       id: makeId('token'),
       voterId: voter.id,
@@ -629,7 +667,7 @@ function generateMissingCodes(password, webAppUrl) {
       issuedAt: nowIso(),
       usedAt: '',
       revokedAt: '',
-      codeSuffix: code.slice(-4)
+      codeSuffix: code
     });
     generated.push({
       voterName: voter.fullName,
@@ -708,6 +746,7 @@ function getConfidentialReport(password) {
       choices[voter.id] = {
         voterName: voter.fullName,
         whatsappNumber: voter.whatsappNumber,
+        code: voter.code || '',
         choices: []
       };
     }

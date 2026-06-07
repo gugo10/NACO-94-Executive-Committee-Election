@@ -67,6 +67,19 @@ YOUR_WEB_APP_URL?page=results
 
 Send private voter links individually by WhatsApp direct message after generating codes from the admin page.
 
+## Voting Codes
+
+Generated voter codes are:
+
+- 5 characters long.
+- Random.
+- Unique for the election.
+- Made from letters and numbers.
+- Exclude confusing characters: `O`, `0`, `I`, and `L`.
+- Stored in the `code` column of the `Voters` tab in the Google Sheet.
+
+If older unused long codes already exist, generating codes again will revoke those unused old codes and issue new 5-character codes.
+
 ## Election Flow
 
 1. Add or import registered voters.
