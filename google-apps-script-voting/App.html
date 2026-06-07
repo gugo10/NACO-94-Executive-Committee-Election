@@ -337,9 +337,10 @@
         </section>
         <section>
           <h2>Reuse for another election</h2>
-          <p class="muted">This archives the current confidential report, clears voting codes, votes, offices, and candidates, then returns the app to setup status. Keep voters if the same membership register will be reused.</p>
+          <p class="muted">This archives the current election into archive tabs, clears voting codes, votes, and candidates, then returns the app to setup status. You can keep offices and/or voters for the next election.</p>
           <label>New election title</label>
           <input id="newElectionTitle" value="NACO 94 Executive Committee Election">
+          <label><input id="keepOfficesForNewElection" type="checkbox" style="width:auto"> Keep offices</label>
           <label><input id="clearVotersForNewElection" type="checkbox" style="width:auto"> Clear voter list too</label>
           <p><button class="warn" onclick="startNewElection()">Archive current election and start new one</button></p>
         </section>
@@ -503,9 +504,15 @@
 
     function startNewElection() {
       const title = document.getElementById('newElectionTitle').value;
+      const keepOffices = document.getElementById('keepOfficesForNewElection').checked;
       const clearVoters = document.getElementById('clearVotersForNewElection').checked;
-      if (confirm('Archive the current election and start a new one? This clears current codes, votes, offices, and candidates.')) {
-        runAdmin('startNewElection', [adminPassword, { title, clearVoters }]);
+      if (confirm('Archive the current election and start a new one? This clears current codes, votes, and candidates. Offices are kept only if selected.')) {
+        statusLine('Archiving current election and starting new one...');
+        run('startNewElection', [adminPassword, { title, clearVoters, keepOffices }], state => {
+          const archive = state.lastArchive ? ` Archive saved as ${state.lastArchive.archivePrefix}.` : '';
+          renderAdmin(state);
+          statusLine('New election setup started.' + archive);
+        });
       }
     }
 

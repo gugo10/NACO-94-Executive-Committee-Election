@@ -1,6 +1,6 @@
 const APP_TITLE = 'NACO 94 Executive Committee Election';
 const DEFAULT_ADMIN_PASSWORD = 'test-admin-password';
-const SCHEMA_VERSION = '3';
+const SCHEMA_VERSION = '4';
 let SPREADSHEET_CACHE = null;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ123456789';
 
@@ -25,7 +25,7 @@ const HEADERS = {
   Votes: ['id', 'officeId', 'candidateId', 'voterId', 'castAt'],
   Audit: ['id', 'actorType', 'actorId', 'eventType', 'metadata', 'createdAt'],
   RegisterSnapshots: ['id', 'snapshotAt', 'voterCount', 'votersJson'],
-  ElectionArchives: ['id', 'archivedAt', 'title', 'reportJson']
+  ElectionArchives: ['id', 'archivedAt', 'title', 'archivePrefix', 'summaryJson']
 };
 
 function setupElectionStorage() {
@@ -194,6 +194,58 @@ function clearSheetData(sheetName) {
   const target = sheet(sheetName);
   const lastRow = target.getLastRow();
   if (lastRow > 1) target.deleteRows(2, lastRow - 1);
+}
+
+function copySheetToArchive(sourceName, archivePrefix) {
+  const spreadsheet = getSpreadsheet();
+  const source = sheet(sourceName);
+  const archived = source.copyTo(spreadsheet);
+  archived.setName(uniqueSheetName(archivePrefix + '_' + sourceName));
+  return archived.getName();
+}
+
+function uniqueSheetName(baseName) {
+  const spreadsheet = getSpreadsheet();
+  const safeBase = String(baseName).replace(/[\[\]\*\?\/\\:]/g, '_').slice(0, 90);
+  let name = safeBase;
+  let index = 2;
+  while (spreadsheet.getSheetByName(name)) {
+    name = (safeBase.slice(0, 85) + '_' + index).slice(0, 99);
+    index++;
+  }
+  return name;
+}
+
+function archiveCurrentElection(title) {
+  const archivedAt = nowIso();
+  const archivePrefix = 'Archive_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  const archiveSheets = {};
+  [
+    SHEETS.VOTERS,
+    SHEETS.OFFICES,
+    SHEETS.CANDIDATES,
+    SHEETS.TOKENS,
+    SHEETS.VOTES,
+    SHEETS.AUDIT,
+    SHEETS.SNAPSHOTS
+  ].forEach(function (sheetName) {
+    archiveSheets[sheetName] = copySheetToArchive(sheetName, archivePrefix);
+  });
+  const summary = buildResults(
+    readRows(SHEETS.VOTERS),
+    readRows(SHEETS.TOKENS),
+    readRows(SHEETS.OFFICES),
+    readRows(SHEETS.CANDIDATES),
+    readRows(SHEETS.VOTES)
+  ).summary;
+  appendRow(SHEETS.ARCHIVES, {
+    id: makeId('archive'),
+    archivedAt: archivedAt,
+    title: title || getSetting('title') || APP_TITLE,
+    archivePrefix: archivePrefix,
+    summaryJson: JSON.stringify({ summary: summary, sheets: archiveSheets })
+  });
+  return { archivedAt: archivedAt, archivePrefix: archivePrefix, sheets: archiveSheets };
 }
 
 function isEligible(voter) {
@@ -732,25 +784,27 @@ function ensureRegisterUnlocked() {
 function startNewElection(password, options) {
   requireAdmin(password);
   options = options || {};
-  const report = getConfidentialReport(password);
-  appendRow(SHEETS.ARCHIVES, {
-    id: makeId('archive'),
-    archivedAt: nowIso(),
-    title: getSetting('title') || APP_TITLE,
-    reportJson: JSON.stringify(report)
-  });
+  const currentTitle = getSetting('title') || APP_TITLE;
+  const archive = archiveCurrentElection(currentTitle);
   clearSheetData(SHEETS.TOKENS);
   clearSheetData(SHEETS.VOTES);
-  clearSheetData(SHEETS.OFFICES);
   clearSheetData(SHEETS.CANDIDATES);
+  if (!options.keepOffices) clearSheetData(SHEETS.OFFICES);
   if (options.clearVoters) clearSheetData(SHEETS.VOTERS);
   setSetting('title', String(options.title || APP_TITLE).trim());
   setSetting('status', 'setup');
   setSetting('opensAt', '');
   setSetting('closesAt', '');
   setSetting('registerLockedAt', '');
-  logAudit('admin', 'admin', 'new_election_started', { title: options.title || APP_TITLE, clearVoters: !!options.clearVoters });
-  return getAdminState(password);
+  logAudit('admin', 'admin', 'new_election_started', {
+    title: options.title || APP_TITLE,
+    clearVoters: !!options.clearVoters,
+    keepOffices: !!options.keepOffices,
+    archivePrefix: archive.archivePrefix
+  });
+  const state = getAdminState(password);
+  state.lastArchive = archive;
+  return state;
 }
 
 function getConfidentialReport(password) {

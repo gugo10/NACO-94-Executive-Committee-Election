@@ -122,9 +122,11 @@ From the admin page, use:
 Archive current election and start new one
 ```
 
-This archives the current confidential report, clears current voting codes, votes, offices, and candidates, unlocks the register, and returns the app to setup status.
+This archives the current election data into timestamped archive tabs in the Google Sheet, clears current voting codes, votes, and candidates, unlocks the register, and returns the app to setup status.
 
-You can choose whether to keep the voter list or clear it too.
+You can choose whether to keep offices and whether to keep or clear the voter list.
+
+Candidates are always cleared for a new election because nominations usually change.
 
 ## Notes
 
