@@ -80,6 +80,39 @@ Send private voter links individually by WhatsApp direct message after generatin
 9. Use the admin report for ELECO-only confidential records.
 10. Set election status to `closed` when voting ends.
 
+## Editing And Cleanup
+
+The admin page includes controls to:
+
+- Edit individual voter names, WhatsApp numbers, eligibility, and exclusion reasons.
+- Delete individual voters before they have recorded votes.
+- Remove duplicate voter imports when the same name and WhatsApp number was imported more than once.
+- Edit or delete offices before votes exist for that office.
+- Edit or delete candidates before votes exist for that candidate.
+- Mark a candidate inactive without deleting the record.
+
+If you accidentally bulk import the same voter list multiple times, use:
+
+```text
+Remove duplicate voters
+```
+
+This keeps the first matching voter record and removes later duplicates with the same name and WhatsApp number.
+
+## Reusing For Another Election
+
+The same deployed app can be reused for another NACO election.
+
+From the admin page, use:
+
+```text
+Archive current election and start new one
+```
+
+This archives the current confidential report, clears current voting codes, votes, offices, and candidates, unlocks the register, and returns the app to setup status.
+
+You can choose whether to keep the voter list or clear it too.
+
 ## Notes
 
 - The public results page shows totals only.

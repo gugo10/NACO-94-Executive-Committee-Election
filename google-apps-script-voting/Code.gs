@@ -9,7 +9,8 @@ const SHEETS = {
   TOKENS: 'Tokens',
   VOTES: 'Votes',
   AUDIT: 'Audit',
-  SNAPSHOTS: 'RegisterSnapshots'
+  SNAPSHOTS: 'RegisterSnapshots',
+  ARCHIVES: 'ElectionArchives'
 };
 
 const HEADERS = {
@@ -20,7 +21,8 @@ const HEADERS = {
   Tokens: ['id', 'voterId', 'tokenHash', 'issuedAt', 'usedAt', 'revokedAt', 'codeSuffix'],
   Votes: ['id', 'officeId', 'candidateId', 'voterId', 'castAt'],
   Audit: ['id', 'actorType', 'actorId', 'eventType', 'metadata', 'createdAt'],
-  RegisterSnapshots: ['id', 'snapshotAt', 'voterCount', 'votersJson']
+  RegisterSnapshots: ['id', 'snapshotAt', 'voterCount', 'votersJson'],
+  ElectionArchives: ['id', 'archivedAt', 'title', 'reportJson']
 };
 
 function setupElectionStorage() {
@@ -35,17 +37,7 @@ function setupElectionStorage() {
     props.setProperty('SPREADSHEET_ID', spreadsheet.getId());
   }
 
-  Object.keys(SHEETS).forEach(function (key) {
-    const sheetName = SHEETS[key];
-    let sheet = spreadsheet.getSheetByName(sheetName);
-    if (!sheet) sheet = spreadsheet.insertSheet(sheetName);
-    const headers = HEADERS[sheetName];
-    const current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    if (current.join('') === '') {
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      sheet.setFrozenRows(1);
-    }
-  });
+  ensureSchema(spreadsheet);
 
   seedSetting('title', APP_TITLE);
   seedSetting('status', 'setup');
@@ -80,9 +72,35 @@ function include(filename) {
 }
 
 function setupIfNeeded() {
-  if (!PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID')) {
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  if (!spreadsheetId) {
     setupElectionStorage();
+  } else {
+    ensureSchema(SpreadsheetApp.openById(spreadsheetId));
   }
+}
+
+function ensureSchema(spreadsheet) {
+  Object.keys(SHEETS).forEach(function (key) {
+    const sheetName = SHEETS[key];
+    let target = spreadsheet.getSheetByName(sheetName);
+    if (!target) target = spreadsheet.insertSheet(sheetName);
+    const headers = HEADERS[sheetName];
+    const lastColumn = Math.max(target.getLastColumn(), headers.length);
+    const current = target.getRange(1, 1, 1, lastColumn).getValues()[0].filter(function (header) {
+      return String(header || '') !== '';
+    });
+    if (current.length === 0) {
+      target.getRange(1, 1, 1, headers.length).setValues([headers]);
+      target.setFrozenRows(1);
+      return;
+    }
+    const missing = headers.filter(function (header) { return current.indexOf(header) === -1; });
+    if (missing.length) {
+      target.getRange(1, current.length + 1, 1, missing.length).setValues([missing]);
+    }
+    target.setFrozenRows(1);
+  });
 }
 
 function getSpreadsheet() {
@@ -144,6 +162,23 @@ function updateRow(sheetName, rowNumber, record) {
   ]);
 }
 
+function deleteRowsByNumber(sheetName, rowNumbers) {
+  const target = sheet(sheetName);
+  rowNumbers.sort(function (a, b) { return b - a; }).forEach(function (rowNumber) {
+    if (rowNumber > 1) target.deleteRow(rowNumber);
+  });
+}
+
+function clearSheetData(sheetName) {
+  const target = sheet(sheetName);
+  const lastRow = target.getLastRow();
+  if (lastRow > 1) target.deleteRows(2, lastRow - 1);
+}
+
+function isEligible(voter) {
+  return String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true';
+}
+
 function makeId(prefix) {
   return prefix + '_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
 }
@@ -189,7 +224,7 @@ function getResults() {
   });
   const candidates = readRows(SHEETS.CANDIDATES);
   const votes = readRows(SHEETS.VOTES);
-  const eligible = voters.filter(function (v) { return String(v.eligible) === 'TRUE' || v.eligible === true || String(v.eligible).toLowerCase() === 'true'; });
+  const eligible = voters.filter(isEligible);
   const excluded = voters.length - eligible.length;
   const votedIds = {};
   tokens.forEach(function (token) {
@@ -243,7 +278,7 @@ function lookupCode(code) {
   }
   const voter = readRows(SHEETS.VOTERS).find(function (item) { return item.id === token.voterId; });
   if (!voter) throw new Error('This code is not linked to a registered voter.');
-  const eligible = String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true';
+  const eligible = isEligible(voter);
   if (!eligible) throw new Error('This registered member is not eligible to vote.');
   if (token.usedAt) {
     return { alreadyVoted: true, voter: publicVoter(voter), election: getPublicConfig() };
@@ -311,7 +346,7 @@ function submitVote(code, choices) {
     }
 
     const voter = readRows(SHEETS.VOTERS).find(function (item) { return item.id === token.voterId; });
-    const eligible = voter && (String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true');
+    const eligible = voter && isEligible(voter);
     if (!eligible) throw new Error('This member is not eligible to vote.');
     const openMessage = votingOpenMessage();
     if (openMessage) throw new Error(openMessage);
@@ -427,6 +462,53 @@ function updateVoter(password, voter) {
   return getAdminState(password);
 }
 
+function deleteVoter(password, voterId) {
+  requireAdmin(password);
+  ensureRegisterUnlocked();
+  const voters = readRows(SHEETS.VOTERS);
+  const voter = voters.find(function (item) { return item.id === voterId; });
+  if (!voter) throw new Error('Voter not found.');
+  const votes = readRows(SHEETS.VOTES).filter(function (vote) { return vote.voterId === voterId; });
+  if (votes.length) throw new Error('This voter already has recorded votes. Delete is blocked to protect election records.');
+  const tokenRows = readRows(SHEETS.TOKENS).filter(function (token) {
+    return token.voterId === voterId;
+  }).map(function (token) { return token._row; });
+  deleteRowsByNumber(SHEETS.TOKENS, tokenRows);
+  deleteRowsByNumber(SHEETS.VOTERS, [voter._row]);
+  logAudit('admin', 'admin', 'voter_deleted', { voterId: voterId, fullName: voter.fullName });
+  return getAdminState(password);
+}
+
+function removeDuplicateVoters(password) {
+  requireAdmin(password);
+  ensureRegisterUnlocked();
+  const voters = readRows(SHEETS.VOTERS);
+  const votes = readRows(SHEETS.VOTES);
+  const votedIds = {};
+  votes.forEach(function (vote) { votedIds[vote.voterId] = true; });
+  const seen = {};
+  const duplicateRows = [];
+  const duplicateIds = [];
+  voters.forEach(function (voter) {
+    const key = String(voter.fullName || '').trim().toLowerCase() + '|' + String(voter.whatsappNumber || '').replace(/\D/g, '');
+    if (!key || key === '|') return;
+    if (!seen[key]) {
+      seen[key] = true;
+      return;
+    }
+    if (votedIds[voter.id]) return;
+    duplicateRows.push(voter._row);
+    duplicateIds.push(voter.id);
+  });
+  const tokenRows = readRows(SHEETS.TOKENS).filter(function (token) {
+    return duplicateIds.indexOf(token.voterId) !== -1;
+  }).map(function (token) { return token._row; });
+  deleteRowsByNumber(SHEETS.TOKENS, tokenRows);
+  deleteRowsByNumber(SHEETS.VOTERS, duplicateRows);
+  logAudit('admin', 'admin', 'duplicate_voters_removed', { count: duplicateRows.length });
+  return { removed: duplicateRows.length, state: getAdminState(password) };
+}
+
 function addOffice(password, office) {
   requireAdmin(password);
   appendRow(SHEETS.OFFICES, {
@@ -436,6 +518,34 @@ function addOffice(password, office) {
     displayOrder: Number(office.displayOrder || 1)
   });
   logAudit('admin', 'admin', 'office_added', { title: office.title });
+  return getAdminState(password);
+}
+
+function updateOffice(password, office) {
+  requireAdmin(password);
+  const rows = readRows(SHEETS.OFFICES);
+  const existing = rows.find(function (item) { return item.id === office.id; });
+  if (!existing) throw new Error('Office not found.');
+  existing.title = String(office.title || '').trim();
+  existing.seatsAvailable = Number(office.seatsAvailable || 1);
+  existing.displayOrder = Number(office.displayOrder || 1);
+  updateRow(SHEETS.OFFICES, existing._row, existing);
+  logAudit('admin', 'admin', 'office_updated', { officeId: office.id });
+  return getAdminState(password);
+}
+
+function deleteOffice(password, officeId) {
+  requireAdmin(password);
+  const office = readRows(SHEETS.OFFICES).find(function (item) { return item.id === officeId; });
+  if (!office) throw new Error('Office not found.');
+  const hasVotes = readRows(SHEETS.VOTES).some(function (vote) { return vote.officeId === officeId; });
+  if (hasVotes) throw new Error('This office already has votes. Delete is blocked to protect election records.');
+  const candidateRows = readRows(SHEETS.CANDIDATES).filter(function (candidate) {
+    return candidate.officeId === officeId;
+  }).map(function (candidate) { return candidate._row; });
+  deleteRowsByNumber(SHEETS.CANDIDATES, candidateRows);
+  deleteRowsByNumber(SHEETS.OFFICES, [office._row]);
+  logAudit('admin', 'admin', 'office_deleted', { officeId: officeId, title: office.title });
   return getAdminState(password);
 }
 
@@ -452,13 +562,38 @@ function addCandidate(password, candidate) {
   return getAdminState(password);
 }
 
+function updateCandidate(password, candidate) {
+  requireAdmin(password);
+  const rows = readRows(SHEETS.CANDIDATES);
+  const existing = rows.find(function (item) { return item.id === candidate.id; });
+  if (!existing) throw new Error('Candidate not found.');
+  existing.officeId = candidate.officeId;
+  existing.fullName = String(candidate.fullName || '').trim();
+  existing.displayName = String(candidate.displayName || candidate.fullName || '').trim();
+  existing.status = candidate.status || 'active';
+  updateRow(SHEETS.CANDIDATES, existing._row, existing);
+  logAudit('admin', 'admin', 'candidate_updated', { candidateId: candidate.id });
+  return getAdminState(password);
+}
+
+function deleteCandidate(password, candidateId) {
+  requireAdmin(password);
+  const candidate = readRows(SHEETS.CANDIDATES).find(function (item) { return item.id === candidateId; });
+  if (!candidate) throw new Error('Candidate not found.');
+  const hasVotes = readRows(SHEETS.VOTES).some(function (vote) { return vote.candidateId === candidateId; });
+  if (hasVotes) throw new Error('This candidate already has votes. Delete is blocked to protect election records.');
+  deleteRowsByNumber(SHEETS.CANDIDATES, [candidate._row]);
+  logAudit('admin', 'admin', 'candidate_deleted', { candidateId: candidateId, fullName: candidate.fullName });
+  return getAdminState(password);
+}
+
 function generateMissingCodes(password, webAppUrl) {
   requireAdmin(password);
   const voters = readRows(SHEETS.VOTERS);
   const tokens = readRows(SHEETS.TOKENS);
   const generated = [];
   voters.forEach(function (voter) {
-    const eligible = String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true';
+    const eligible = isEligible(voter);
     const hasActive = tokens.some(function (token) {
       return token.voterId === voter.id && !token.revokedAt && !token.usedAt;
     });
@@ -505,6 +640,30 @@ function ensureRegisterUnlocked() {
   }
 }
 
+function startNewElection(password, options) {
+  requireAdmin(password);
+  options = options || {};
+  const report = getConfidentialReport(password);
+  appendRow(SHEETS.ARCHIVES, {
+    id: makeId('archive'),
+    archivedAt: nowIso(),
+    title: getSetting('title') || APP_TITLE,
+    reportJson: JSON.stringify(report)
+  });
+  clearSheetData(SHEETS.TOKENS);
+  clearSheetData(SHEETS.VOTES);
+  clearSheetData(SHEETS.OFFICES);
+  clearSheetData(SHEETS.CANDIDATES);
+  if (options.clearVoters) clearSheetData(SHEETS.VOTERS);
+  setSetting('title', String(options.title || APP_TITLE).trim());
+  setSetting('status', 'setup');
+  setSetting('opensAt', '');
+  setSetting('closesAt', '');
+  setSetting('registerLockedAt', '');
+  logAudit('admin', 'admin', 'new_election_started', { title: options.title || APP_TITLE, clearVoters: !!options.clearVoters });
+  return getAdminState(password);
+}
+
 function getConfidentialReport(password) {
   requireAdmin(password);
   const voters = readRows(SHEETS.VOTERS);
@@ -540,11 +699,11 @@ function getConfidentialReport(password) {
     results: getResults(),
     votersWhoVoted: voters.filter(function (voter) { return votedIds[voter.id]; }),
     eligibleVotersWhoDidNotVote: voters.filter(function (voter) {
-      const eligible = String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true';
+      const eligible = isEligible(voter);
       return eligible && !votedIds[voter.id];
     }),
     excludedVoters: voters.filter(function (voter) {
-      return !(String(voter.eligible) === 'TRUE' || voter.eligible === true || String(voter.eligible).toLowerCase() === 'true');
+      return !isEligible(voter);
     }),
     confidentialChoices: Object.keys(choices).map(function (key) { return choices[key]; }),
     audit: readRows(SHEETS.AUDIT),

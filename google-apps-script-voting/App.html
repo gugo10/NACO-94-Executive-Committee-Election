@@ -23,6 +23,7 @@
     button, .button { background:var(--accent); color:white; border:0; border-radius:6px; padding:11px 14px; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
     button.secondary { background:#314156; }
     button.warn { background:var(--warn); }
+    button.danger { background:var(--danger); }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
     .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
     .stat { border:1px solid #cde6dc; background:#eef7f3; border-radius:8px; padding:11px; }
@@ -250,6 +251,7 @@
         </section>
         <section>
           <h2>Voters</h2>
+          <p class="muted">Edit or delete voter records before voting starts. Delete is blocked after a voter has recorded votes.</p>
           <div class="grid">
             <div class="panel">
               <h3>Add voter</h3>
@@ -262,19 +264,29 @@
             <div class="panel">
               <h3>Bulk import</h3>
               <textarea id="bulkVoters" placeholder="One per line: Full Name, WhatsApp Number"></textarea>
-              <p><button onclick="importVoters()">Import voters</button></p>
+              <p><button onclick="importVoters()">Import voters</button> <button class="warn" onclick="removeDuplicateVoters()">Remove duplicate voters</button></p>
             </div>
           </div>
-          <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th></tr></thead><tbody>
+          <table><thead><tr><th>Name</th><th>WhatsApp</th><th>Status</th><th>Code</th><th>Actions</th></tr></thead><tbody>
             ${state.voters.map(v => {
               const t = tokenByVoter[v.id];
               const eligible = String(v.eligible).toLowerCase() === 'true';
-              return `<tr><td>${html(v.fullName)}</td><td>${html(v.whatsappNumber)}</td><td>${eligible ? '<span class="pill ok">Eligible</span>' : '<span class="pill bad">Excluded</span>'} ${html(v.exclusionReason || '')}</td><td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td></tr>`;
+              return `<tr>
+                <td><input id="v_name_${html(v.id)}" value="${html(v.fullName)}"></td>
+                <td><input id="v_phone_${html(v.id)}" value="${html(v.whatsappNumber)}"></td>
+                <td>
+                  <select id="v_eligible_${html(v.id)}"><option value="true" ${eligible ? 'selected' : ''}>Eligible</option><option value="false" ${!eligible ? 'selected' : ''}>Ineligible</option></select>
+                  <input id="v_reason_${html(v.id)}" value="${html(v.exclusionReason || '')}" placeholder="Exclusion reason">
+                </td>
+                <td>${t ? (t.usedAt ? '<span class="pill bad">Used</span>' : '<span class="pill ok">Issued</span>') : '<span class="pill">None</span>'}</td>
+                <td><button onclick="updateVoter('${html(v.id)}')">Save</button> <button class="danger" onclick="deleteVoter('${html(v.id)}')">Delete</button></td>
+              </tr>`;
             }).join('')}
           </tbody></table>
         </section>
         <section>
           <h2>Offices and candidates</h2>
+          <p class="muted">Edit or delete offices and candidates before voting starts. Delete is blocked once votes exist.</p>
           <div class="grid">
             <div class="panel">
               <h3>Add office</h3>
@@ -291,7 +303,25 @@
               <p><button onclick="addCandidate()">Add candidate</button></p>
             </div>
           </div>
-          ${state.offices.map(o => `<div class="panel"><h3>${html(o.title)}</h3><ul>${state.candidates.filter(c => c.officeId === o.id).map(c => `<li>${html(c.displayName || c.fullName)}</li>`).join('') || '<li>No candidates yet.</li>'}</ul></div>`).join('')}
+          ${state.offices.map(o => `<div class="panel">
+            <h3>Office</h3>
+            <div class="grid">
+              <div><label>Title</label><input id="o_title_${html(o.id)}" value="${html(o.title)}"></div>
+              <div><label>Seats</label><input id="o_seats_${html(o.id)}" type="number" value="${html(o.seatsAvailable || 1)}"></div>
+              <div><label>Order</label><input id="o_order_${html(o.id)}" type="number" value="${html(o.displayOrder || 1)}"></div>
+            </div>
+            <p><button onclick="updateOffice('${html(o.id)}')">Save office</button> <button class="danger" onclick="deleteOffice('${html(o.id)}')">Delete office</button></p>
+            <h3>Candidates</h3>
+            ${state.candidates.filter(c => c.officeId === o.id).map(c => `<div class="panel">
+              <div class="grid">
+                <div><label>Office</label><select id="c_office_${html(c.id)}">${state.offices.map(option => `<option value="${html(option.id)}" ${option.id === c.officeId ? 'selected' : ''}>${html(option.title)}</option>`).join('')}</select></div>
+                <div><label>Full name</label><input id="c_name_${html(c.id)}" value="${html(c.fullName)}"></div>
+                <div><label>Display name</label><input id="c_display_${html(c.id)}" value="${html(c.displayName || '')}"></div>
+                <div><label>Status</label><select id="c_status_${html(c.id)}"><option value="active" ${String(c.status || 'active') === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${String(c.status || 'active') === 'inactive' ? 'selected' : ''}>Inactive</option></select></div>
+              </div>
+              <p><button onclick="updateCandidate('${html(c.id)}')">Save candidate</button> <button class="danger" onclick="deleteCandidate('${html(c.id)}')">Delete candidate</button></p>
+            </div>`).join('') || '<p class="muted">No candidates yet.</p>'}
+          </div>`).join('')}
         </section>
         <section>
           <h2>Voting codes</h2>
@@ -303,6 +333,14 @@
           <h2>Confidential ELECO report</h2>
           <p class="muted">This report includes voter-by-voter choices. Do not share it with the public group.</p>
           <p><button class="secondary" onclick="showReport()">Open confidential report</button></p>
+        </section>
+        <section>
+          <h2>Reuse for another election</h2>
+          <p class="muted">This archives the current confidential report, clears voting codes, votes, offices, and candidates, then returns the app to setup status. Keep voters if the same membership register will be reused.</p>
+          <label>New election title</label>
+          <input id="newElectionTitle" value="NACO 94 Executive Committee Election">
+          <label><input id="clearVotersForNewElection" type="checkbox" style="width:auto"> Clear voter list too</label>
+          <p><button class="warn" onclick="startNewElection()">Archive current election and start new one</button></p>
         </section>
       `);
     }
@@ -337,6 +375,31 @@
       run('importVoters', [adminPassword, document.getElementById('bulkVoters').value], renderAdmin);
     }
 
+    function updateVoter(id) {
+      run('updateVoter', [adminPassword, {
+        id,
+        fullName: document.getElementById(`v_name_${id}`).value,
+        whatsappNumber: document.getElementById(`v_phone_${id}`).value,
+        eligible: document.getElementById(`v_eligible_${id}`).value,
+        exclusionReason: document.getElementById(`v_reason_${id}`).value
+      }], renderAdmin);
+    }
+
+    function deleteVoter(id) {
+      if (confirm('Delete this voter and any unused code linked to them?')) {
+        run('deleteVoter', [adminPassword, id], renderAdmin);
+      }
+    }
+
+    function removeDuplicateVoters() {
+      if (confirm('Remove duplicate voters with the same name and WhatsApp number? The first record will be kept.')) {
+        run('removeDuplicateVoters', [adminPassword], result => {
+          alert(`${result.removed} duplicate voter record(s) removed.`);
+          renderAdmin(result.state);
+        });
+      }
+    }
+
     function addOffice() {
       run('addOffice', [adminPassword, {
         title: document.getElementById('officeTitle').value,
@@ -345,12 +408,43 @@
       }], renderAdmin);
     }
 
+    function updateOffice(id) {
+      run('updateOffice', [adminPassword, {
+        id,
+        title: document.getElementById(`o_title_${id}`).value,
+        seatsAvailable: document.getElementById(`o_seats_${id}`).value,
+        displayOrder: document.getElementById(`o_order_${id}`).value
+      }], renderAdmin);
+    }
+
+    function deleteOffice(id) {
+      if (confirm('Delete this office and all candidates under it?')) {
+        run('deleteOffice', [adminPassword, id], renderAdmin);
+      }
+    }
+
     function addCandidate() {
       run('addCandidate', [adminPassword, {
         officeId: document.getElementById('candidateOffice').value,
         fullName: document.getElementById('candidateName').value,
         displayName: document.getElementById('candidateDisplay').value
       }], renderAdmin);
+    }
+
+    function updateCandidate(id) {
+      run('updateCandidate', [adminPassword, {
+        id,
+        officeId: document.getElementById(`c_office_${id}`).value,
+        fullName: document.getElementById(`c_name_${id}`).value,
+        displayName: document.getElementById(`c_display_${id}`).value,
+        status: document.getElementById(`c_status_${id}`).value
+      }], renderAdmin);
+    }
+
+    function deleteCandidate(id) {
+      if (confirm('Delete this candidate?')) {
+        run('deleteCandidate', [adminPassword, id], renderAdmin);
+      }
     }
 
     function generateCodes() {
@@ -362,6 +456,14 @@
     function lockRegister() {
       if (confirm('Lock the voter register and preserve a final snapshot?')) {
         run('lockRegister', [adminPassword], renderAdmin);
+      }
+    }
+
+    function startNewElection() {
+      const title = document.getElementById('newElectionTitle').value;
+      const clearVoters = document.getElementById('clearVotersForNewElection').checked;
+      if (confirm('Archive the current election and start a new one? This clears current codes, votes, offices, and candidates.')) {
+        run('startNewElection', [adminPassword, { title, clearVoters }], renderAdmin);
       }
     }
 
