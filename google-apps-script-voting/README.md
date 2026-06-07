@@ -90,7 +90,7 @@ If older unused long codes already exist, generating codes again will revoke tho
 6. Send each voter their own code or private link by WhatsApp direct message.
 7. Set election status to `open`.
 8. Watch live public totals.
-9. Use the admin report for ELECO-only confidential records.
+9. Use the ELECO report for turnout lists and result totals.
 10. Set election status to `closed` when voting ends.
 
 ## Editing And Cleanup
@@ -131,7 +131,8 @@ Candidates are always cleared for a new election because nominations usually cha
 ## Notes
 
 - The public results page shows totals only.
-- The admin confidential report shows voter-by-voter choices.
+- The ELECO report shows voters who voted, eligible voters who did not vote, excluded voters, and result totals.
+- The app does not show or store voter-by-voter candidate choices.
 - Voters do not need email accounts.
 - Voters only need the web link and their private code.
 - The app runs from Google servers, not your laptop.

@@ -40,6 +40,22 @@ function ensureData() {
   writeIfMissing(files.votes, []);
   writeIfMissing(files.audit, []);
   writeIfMissing(files.snapshots, []);
+  anonymizeStoredVotes();
+}
+
+function anonymizeStoredVotes() {
+  const target = path.join(DATA_DIR, files.votes);
+  if (!fs.existsSync(target)) return;
+  const votes = JSON.parse(fs.readFileSync(target, "utf8"));
+  let changed = false;
+  for (const vote of votes) {
+    if (vote.voterId || vote.castAt) {
+      vote.voterId = "";
+      vote.castAt = "";
+      changed = true;
+    }
+  }
+  if (changed) save(files.votes, votes);
 }
 
 function writeIfMissing(file, value) {
@@ -587,15 +603,6 @@ function reportData() {
   const results = buildResults();
   const eligibleIds = new Set(st.voters.filter((v) => v.eligible).map((v) => v.id));
   const votedIds = new Set(st.tokens.filter((t) => t.usedAt).map((t) => t.voterId));
-  const choicesByVoter = {};
-  for (const vote of st.votes) {
-    const office = st.offices.find((o) => o.id === vote.officeId);
-    const candidate = st.candidates.find((c) => c.id === vote.candidateId);
-    const voter = st.voters.find((v) => v.id === vote.voterId);
-    if (!voter) continue;
-    choicesByVoter[voter.id] ||= { voter: voter.fullName, whatsappNumber: voter.whatsappNumber, castAt: vote.castAt, choices: [] };
-    choicesByVoter[voter.id].choices.push({ office: office?.title || vote.officeId, candidate: candidate?.displayName || candidate?.fullName || vote.candidateId });
-  }
   return {
     election: st.election,
     summary: results.summary,
@@ -603,7 +610,6 @@ function reportData() {
     votersWhoVoted: st.voters.filter((v) => votedIds.has(v.id)).map((v) => ({ name: v.fullName, whatsappNumber: v.whatsappNumber })),
     eligibleVotersWhoDidNotVote: st.voters.filter((v) => eligibleIds.has(v.id) && !votedIds.has(v.id)).map((v) => ({ name: v.fullName, whatsappNumber: v.whatsappNumber })),
     excludedVoters: st.voters.filter((v) => !v.eligible).map((v) => ({ name: v.fullName, whatsappNumber: v.whatsappNumber, reason: v.exclusionReason || "" })),
-    confidentialChoices: Object.values(choicesByVoter),
     audit: st.audit,
     snapshots: st.snapshots,
   };
@@ -612,10 +618,10 @@ function reportData() {
 function reportPage() {
   const report = reportData();
   return layout(
-    "ELECO Confidential Report",
+    "ELECO Report",
     `<section>
-      <h2>Confidential ELECO report</h2>
-      <p class="muted">Do not share this page with the general WhatsApp group. Public results are available at /results.</p>
+      <h2>ELECO report</h2>
+      <p class="muted">This report shows turnout lists and result totals. It does not show who voted for which candidate.</p>
       <p><a class="button secondary" href="/admin/report.json">Download JSON report</a></p>
       <div class="stats">
         <div class="stat">Registered<strong>${report.summary.registered}</strong></div>
@@ -628,8 +634,7 @@ function reportPage() {
     <section><h2>Result totals</h2>${renderResultsHtml({ summary: report.summary, offices: report.results })}</section>
     <section><h2>Voters who voted</h2>${simpleList(report.votersWhoVoted, "No votes yet.")}</section>
     <section><h2>Eligible voters who did not vote</h2>${simpleList(report.eligibleVotersWhoDidNotVote, "None.")}</section>
-    <section><h2>Excluded voters</h2>${simpleList(report.excludedVoters, "None.")}</section>
-    <section><h2>Voter-by-voter choices</h2>${choiceList(report.confidentialChoices)}</section>`,
+    <section><h2>Excluded voters</h2>${simpleList(report.excludedVoters, "None.")}</section>`,
     { admin: true }
   );
 }
@@ -637,13 +642,6 @@ function reportPage() {
 function simpleList(items, empty) {
   if (!items.length) return `<p class="muted">${esc(empty)}</p>`;
   return `<table><tbody>${items.map((item) => `<tr>${Object.values(item).map((value) => `<td>${esc(value)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-}
-
-function choiceList(items) {
-  if (!items.length) return `<p class="muted">No submitted votes yet.</p>`;
-  return `<table><thead><tr><th>Voter</th><th>WhatsApp</th><th>Choices</th></tr></thead><tbody>${items
-    .map((item) => `<tr><td data-label="Voter">${esc(item.voter)}</td><td data-label="WhatsApp">${esc(item.whatsappNumber)}</td><td data-label="Choices">${item.choices.map((c) => `${esc(c.office)}: ${esc(c.candidate)}`).join("<br>")}</td></tr>`)
-    .join("")}</tbody></table>`;
 }
 
 async function handleAdminPost(req, res, pathname) {
@@ -786,7 +784,7 @@ async function handleVoteSubmit(req, res) {
   }
   const castAt = nowIso();
   for (const selection of selections) {
-    st.votes.push({ id: id("vote"), electionId: st.election.id, officeId: selection.officeId, candidateId: selection.candidateId, voterId: voter.id, castAt });
+    st.votes.push({ id: id("vote"), electionId: st.election.id, officeId: selection.officeId, candidateId: selection.candidateId, voterId: "", castAt: "" });
   }
   token.usedAt = castAt;
   save(files.votes, st.votes);

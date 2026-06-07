@@ -331,9 +331,9 @@
           <textarea id="generatedCodes" readonly placeholder="Generated codes will appear here."></textarea>
         </section>
         <section>
-          <h2>Confidential ELECO report</h2>
-          <p class="muted">This report includes voter-by-voter choices. Do not share it with the public group.</p>
-          <p><button class="secondary" onclick="showReport()">Open confidential report</button></p>
+          <h2>ELECO report</h2>
+          <p class="muted">This report shows turnout lists and result totals. It does not show who voted for which candidate.</p>
+          <p><button class="secondary" onclick="showReport()">Open ELECO report</button></p>
         </section>
         <section>
           <h2>Reuse for another election</h2>
@@ -518,10 +518,10 @@
 
     function showReport() {
       setApp('<section><p>Loading report...</p></section>');
-      run('getConfidentialReport', [adminPassword], report => {
+      run('getElecoReport', [adminPassword], report => {
         setApp(`
           <section>
-            <h2>Confidential ELECO report</h2>
+            <h2>ELECO report</h2>
             ${renderSummary(report.results)}
             <p><button class="secondary" onclick="showAdmin()">Back to admin</button></p>
           </section>
@@ -529,7 +529,6 @@
           <section><h2>Voters who voted</h2>${renderList(report.votersWhoVoted)}</section>
           <section><h2>Eligible voters who did not vote</h2>${renderList(report.eligibleVotersWhoDidNotVote)}</section>
           <section><h2>Excluded voters</h2>${renderList(report.excludedVoters)}</section>
-          <section><h2>Voter-by-voter choices</h2>${report.confidentialChoices.map(item => `<div class="panel"><h3>${html(item.voterName)}</h3><p class="muted">${html(item.whatsappNumber || '')}${item.code ? ' | Code: ' + html(item.code) : ''}</p><ul>${item.choices.map(c => `<li>${html(c.office)}: ${html(c.candidate)}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">No votes yet.</p>'}</section>
         `);
       });
     }

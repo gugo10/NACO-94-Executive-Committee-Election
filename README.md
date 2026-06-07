@@ -12,7 +12,7 @@ This is a simple WhatsApp-friendly voting app for the NACO 94 ELECO process.
 - Voter sees a welcome page with their name before voting.
 - Each eligible voter can vote only once.
 - Public results show totals only.
-- ELECO confidential report is available behind admin login at `/admin/report`.
+- ELECO report is available behind admin login at `/admin/report`.
 - Voter register can be locked and snapshotted before voting.
 - Data is stored as JSON in `data/`.
 
@@ -43,7 +43,7 @@ Then open:
 
 The public results page does not show voter names or individual choices.
 
-The ELECO admin report is confidential and includes voter-by-voter choices for ELECO supervision. Do not share the admin password or report link with the general group.
+The ELECO report shows turnout lists and result totals. It does not show who voted for which candidate. Do not share the admin password or report link with the general group.
 
 ## Deployment note
 

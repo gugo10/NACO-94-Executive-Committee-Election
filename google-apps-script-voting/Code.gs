@@ -1,6 +1,6 @@
 const APP_TITLE = 'NACO 94 Executive Committee Election';
 const DEFAULT_ADMIN_PASSWORD = 'test-admin-password';
-const SCHEMA_VERSION = '4';
+const SCHEMA_VERSION = '5';
 let SPREADSHEET_CACHE = null;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ123456789';
 
@@ -42,6 +42,7 @@ function setupElectionStorage() {
 
   ensureSchema(spreadsheet);
   SPREADSHEET_CACHE = spreadsheet;
+  anonymizeExistingVotes();
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 
   seedSetting('title', APP_TITLE);
@@ -88,6 +89,7 @@ function setupIfNeeded() {
     const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
     ensureSchema(spreadsheet);
     SPREADSHEET_CACHE = spreadsheet;
+    anonymizeExistingVotes();
     props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
   }
 }
@@ -194,6 +196,17 @@ function clearSheetData(sheetName) {
   const target = sheet(sheetName);
   const lastRow = target.getLastRow();
   if (lastRow > 1) target.deleteRows(2, lastRow - 1);
+}
+
+function anonymizeExistingVotes() {
+  const votes = readRows(SHEETS.VOTES);
+  votes.forEach(function (vote) {
+    if (vote.voterId || vote.castAt) {
+      vote.voterId = '';
+      vote.castAt = '';
+      updateRow(SHEETS.VOTES, vote._row, vote);
+    }
+  });
 }
 
 function copySheetToArchive(sourceName, archivePrefix) {
@@ -457,8 +470,8 @@ function submitVote(code, choices) {
           id: makeId('vote'),
           officeId: office.id,
           candidateId: candidateId,
-          voterId: voter.id,
-          castAt: castAt
+          voterId: '',
+          castAt: ''
         });
       }
     });
@@ -810,33 +823,13 @@ function startNewElection(password, options) {
 function getConfidentialReport(password) {
   requireAdmin(password);
   const voters = readRows(SHEETS.VOTERS);
+  const tokens = readRows(SHEETS.TOKENS);
   const offices = readRows(SHEETS.OFFICES);
   const candidates = readRows(SHEETS.CANDIDATES);
-  const tokens = readRows(SHEETS.TOKENS);
   const votes = readRows(SHEETS.VOTES);
   const votedIds = {};
   tokens.forEach(function (token) {
     if (token.usedAt) votedIds[token.voterId] = true;
-  });
-  const choices = {};
-  votes.forEach(function (vote) {
-    const voter = voters.find(function (item) { return item.id === vote.voterId; });
-    const office = offices.find(function (item) { return item.id === vote.officeId; });
-    const candidate = candidates.find(function (item) { return item.id === vote.candidateId; });
-    if (!voter) return;
-    if (!choices[voter.id]) {
-      choices[voter.id] = {
-        voterName: voter.fullName,
-        whatsappNumber: voter.whatsappNumber,
-        code: voter.code || '',
-        choices: []
-      };
-    }
-    choices[voter.id].choices.push({
-      office: office ? office.title : vote.officeId,
-      candidate: candidate ? (candidate.displayName || candidate.fullName) : vote.candidateId,
-      castAt: vote.castAt
-    });
   });
   return {
     election: getPublicConfig(),
@@ -849,10 +842,13 @@ function getConfidentialReport(password) {
     excludedVoters: voters.filter(function (voter) {
       return !isEligible(voter);
     }),
-    confidentialChoices: Object.keys(choices).map(function (key) { return choices[key]; }),
     audit: readRows(SHEETS.AUDIT),
     snapshots: readRows(SHEETS.SNAPSHOTS)
   };
+}
+
+function getElecoReport(password) {
+  return getConfidentialReport(password);
 }
 
 function logAudit(actorType, actorId, eventType, metadata) {
